@@ -5,6 +5,7 @@ import com.hubspot.jinjava.el.ext.ExtendedParser;
 import com.hubspot.jinjava.el.ext.IdentifierPreservationStrategy;
 import com.hubspot.jinjava.interpret.DeferredValueException;
 import com.hubspot.jinjava.interpret.JinjavaInterpreter;
+import com.hubspot.jinjava.interpret.MetaContextVariables;
 import com.hubspot.jinjava.interpret.PartiallyDeferredValue;
 import com.hubspot.jinjava.util.EagerExpressionResolver;
 import de.odysseus.el.tree.Bindings;
@@ -51,11 +52,9 @@ public interface EvalResultHolder {
     if (
       evalResult instanceof Collection &&
       ((Collection<?>) evalResult).size() > 100 && // TODO make size configurable
-      (
-        (JinjavaInterpreter) context
+      ((JinjavaInterpreter) context
           .getELResolver()
-          .getValue(context, null, ExtendedParser.INTERPRETER)
-      ).getContext()
+          .getValue(context, null, ExtendedParser.INTERPRETER)).getContext()
         .isDeferLargeObjects()
     ) {
       throw new DeferredValueException("Collection too big");
@@ -83,8 +82,8 @@ public interface EvalResultHolder {
     preserveIdentifier =
       IdentifierPreservationStrategy.preserving(
         preserveIdentifier.isPreserving() ||
-        astNode instanceof AstIdentifier &&
-        ExtendedParser.INTERPRETER.equals(((AstIdentifier) astNode).getName())
+        (astNode instanceof AstIdentifier &&
+          ExtendedParser.INTERPRETER.equals(((AstIdentifier) astNode).getName()))
       );
     if (
       preserveIdentifier.isPreserving() &&
@@ -107,13 +106,9 @@ public interface EvalResultHolder {
     }
     if (
       !preserveIdentifier.isPreserving() ||
-      (
-        astNode.hasEvalResult() &&
-        (
-          EagerExpressionResolver.isPrimitive(evalResult) ||
-          evalResult instanceof PartiallyDeferredValue
-        )
-      )
+      (astNode.hasEvalResult() &&
+        (EagerExpressionResolver.isPrimitive(evalResult) ||
+          evalResult instanceof PartiallyDeferredValue))
     ) {
       if (exceptionMatchesNode(exception, astNode)) {
         return exception.getDeferredEvalResult();
@@ -131,13 +126,12 @@ public interface EvalResultHolder {
         if (astNode instanceof AstIdentifier) {
           String name = ((AstIdentifier) astNode).getName();
           if (
-            (
-              (JinjavaInterpreter) context
-                .getELResolver()
-                .getValue(context, null, ExtendedParser.INTERPRETER)
-            ).getContext()
-              .getMetaContextVariables()
-              .contains(name)
+            MetaContextVariables.isMetaContextVariable(
+              name,
+              ((JinjavaInterpreter) context
+                  .getELResolver()
+                  .getValue(context, null, ExtendedParser.INTERPRETER)).getContext()
+            )
           ) {
             return name;
           }

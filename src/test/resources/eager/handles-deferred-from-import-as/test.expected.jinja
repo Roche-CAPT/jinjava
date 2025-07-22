@@ -1,0 +1,12 @@
+{% set myname = deferred + 7 %}\
+{% do %}
+{% set bar = myname + 19 %}
+{% for __ignored__ in [0] %}\
+Hello {{ myname }}\
+{% endfor %}
+{% set from_bar = bar %}\
+{% enddo %}\
+from_foo: {% for __ignored__ in [0] %}\
+Hello {{ myname }}\
+{% endfor %}
+from_bar: {{ from_bar }}

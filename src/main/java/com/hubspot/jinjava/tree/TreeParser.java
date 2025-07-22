@@ -170,14 +170,17 @@ public class TreeParser {
 
   private Node text(TextToken textToken) {
     if (interpreter.getConfig().isLstripBlocks()) {
-      if (scanner.hasNext() && scanner.peek().getType() == symbols.getTag()) {
-        textToken =
-          new TextToken(
-            StringUtils.stripEnd(textToken.getImage(), "\t "),
-            textToken.getLineNumber(),
-            textToken.getStartPosition(),
-            symbols
-          );
+      if (scanner.hasNext()) {
+        final int nextTokenType = scanner.peek().getType();
+        if (nextTokenType == symbols.getTag() || nextTokenType == symbols.getNote()) {
+          textToken =
+            new TextToken(
+              StringUtils.stripEnd(textToken.getImage(), "\t "),
+              textToken.getLineNumber(),
+              textToken.getStartPosition(),
+              symbols
+            );
+        }
       }
     }
 
@@ -208,12 +211,10 @@ public class TreeParser {
     if (lastSibling instanceof TagNode) {
       return (
           ((TagNode) lastSibling).getEndName() == null ||
-          (
-            ((TagNode) lastSibling).getTag() instanceof FlexibleTag &&
+          (((TagNode) lastSibling).getTag() instanceof FlexibleTag &&
             !((FlexibleTag) ((TagNode) lastSibling).getTag()).hasEndTag(
                 (TagToken) lastSibling.getMaster()
-              )
-          )
+              ))
         )
         ? lastSibling.getMaster().isRightTrim()
         : lastSibling.getMaster().isRightTrimAfterEnd();

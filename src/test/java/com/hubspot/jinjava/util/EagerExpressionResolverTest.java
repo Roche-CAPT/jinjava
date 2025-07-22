@@ -339,9 +339,9 @@ public class EagerExpressionResolverTest {
       " %}"
     );
     assertThat(
-      (
-        (PyishDate) ((Map<String, Object>) interpreter.getContext().get("foo")).get("a")
-      ).toDateTime()
+      ((PyishDate) ((Map<String, Object>) interpreter.getContext().get("foo")).get(
+            "a"
+          )).toDateTime()
     )
       .isEqualTo(date.toDateTime());
   }
@@ -600,7 +600,7 @@ public class EagerExpressionResolverTest {
   @Test
   public void itHandlesPyishSerializableWithProcessingException() {
     context.put("foo", new SomethingExceptionallyPyish("yes"));
-    context.getMetaContextVariables().add("foo");
+    context.addMetaContextVariables(Collections.singleton("foo"));
     assertThat(interpreter.render("{{ deferred && (1 == 2 || foo) }}"))
       .isEqualTo("{{ deferred && (false || foo) }}");
   }
@@ -952,6 +952,16 @@ public class EagerExpressionResolverTest {
   @Test
   public void itCountsBigDecimalAsPrimitive() {
     assertThat(EagerExpressionResolver.isResolvableObject(new BigDecimal("2.1E7")))
+      .isTrue();
+  }
+
+  @Test
+  public void itCountsOptionalAsResolvable() {
+    assertThat(
+      EagerExpressionResolver.isResolvableObject(
+        ImmutableList.of(Optional.of(123), Optional.empty())
+      )
+    )
       .isTrue();
   }
 }

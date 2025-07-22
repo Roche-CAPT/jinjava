@@ -2,7 +2,6 @@ package com.hubspot.jinjava.util;
 
 import com.google.common.annotations.Beta;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.Sets;
 import com.hubspot.jinjava.el.ext.AbstractCallableMethod;
 import com.hubspot.jinjava.interpret.Context;
 import com.hubspot.jinjava.interpret.Context.Library;
@@ -11,6 +10,7 @@ import com.hubspot.jinjava.interpret.DeferredValue;
 import com.hubspot.jinjava.interpret.DeferredValueShadow;
 import com.hubspot.jinjava.interpret.DisabledException;
 import com.hubspot.jinjava.interpret.JinjavaInterpreter;
+import com.hubspot.jinjava.interpret.MetaContextVariables;
 import com.hubspot.jinjava.interpret.OneTimeReconstructible;
 import com.hubspot.jinjava.lib.fn.MacroFunction;
 import com.hubspot.jinjava.lib.fn.eager.EagerMacroFunction;
@@ -22,21 +22,25 @@ import com.hubspot.jinjava.lib.tag.SetTag;
 import com.hubspot.jinjava.lib.tag.eager.DeferredToken;
 import com.hubspot.jinjava.lib.tag.eager.EagerExecutionResult;
 import com.hubspot.jinjava.lib.tag.eager.EagerSetTagStrategy;
-import com.hubspot.jinjava.lib.tag.eager.importing.AliasedEagerImportingStrategy;
-import com.hubspot.jinjava.mode.EagerExecutionMode;
+import com.hubspot.jinjava.loader.RelativePathResolver;
 import com.hubspot.jinjava.objects.serialization.PyishBlockSetSerializable;
 import com.hubspot.jinjava.objects.serialization.PyishObjectMapper;
 import com.hubspot.jinjava.objects.serialization.PyishSerializable;
 import com.hubspot.jinjava.tree.TagNode;
+import com.hubspot.jinjava.tree.output.DynamicRenderedOutputNode;
+import com.hubspot.jinjava.tree.output.OutputList;
+import com.hubspot.jinjava.tree.output.RenderedOutputNode;
 import com.hubspot.jinjava.tree.parse.NoteToken;
 import com.hubspot.jinjava.tree.parse.TagToken;
 import com.hubspot.jinjava.tree.parse.TokenScannerSymbols;
 import com.hubspot.jinjava.util.EagerContextWatcher.EagerChildContextConfig;
 import com.hubspot.jinjava.util.EagerExpressionResolver.EagerExpressionResult;
 import java.util.AbstractMap;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
@@ -308,10 +312,11 @@ public class EagerReconstructionUtils {
     JinjavaInterpreter interpreter,
     int depth
   ) {
-    Set<String> metaContextVariables = interpreter.getContext().getMetaContextVariables();
     deferredWords
       .stream()
-      .filter(w -> !metaContextVariables.contains(w))
+      .filter(w ->
+        !MetaContextVariables.isMetaContextVariable(w, interpreter.getContext())
+      )
       .filter(w -> !prefixToPreserveState.containsKey(w))
       .map(word ->
         new AbstractMap.SimpleImmutableEntry<>(word, interpreter.getContext().get(word))
@@ -471,12 +476,12 @@ public class EagerReconstructionUtils {
 
     StringJoiner vars = new StringJoiner(",");
     StringJoiner values = new StringJoiner(",");
-    StringJoiner varsRequiringSuffix = new StringJoiner(",");
+    List<String> varsRequiringSuffix = new ArrayList<>();
     deferredValuesToSet.forEach((key, value) -> {
       // This ensures they are properly aligned to each other.
       vars.add(key);
       values.add(value);
-      if (!AliasedEagerImportingStrategy.isTemporaryImportAlias(value)) {
+      if (!MetaContextVariables.isTemporaryImportAlias(value)) {
         varsRequiringSuffix.add(key);
       }
     });
@@ -493,7 +498,7 @@ public class EagerReconstructionUtils {
       .add(interpreter.getConfig().getTokenScannerSymbols().getExpressionEndWithTag());
     String image = result.toString();
     String suffix = EagerSetTagStrategy.getSuffixToPreserveState(
-      varsRequiringSuffix.toString(),
+      varsRequiringSuffix,
       interpreter
     );
     // Don't defer if we're sticking with the new value
@@ -556,7 +561,10 @@ public class EagerReconstructionUtils {
       .add("end" + SetTag.TAG_NAME)
       .add(interpreter.getConfig().getTokenScannerSymbols().getExpressionEndWithTag());
     String image = blockSetTokenBuilder + value + endTokenBuilder;
-    String suffix = EagerSetTagStrategy.getSuffixToPreserveState(name, interpreter);
+    String suffix = EagerSetTagStrategy.getSuffixToPreserveState(
+      new String[] { name },
+      interpreter
+    );
     if (registerDeferredToken) {
       return (
         new PrefixToPreserveState(
@@ -634,10 +642,8 @@ public class EagerReconstructionUtils {
   ) {
     if (
       interpreter.getContext().isAutoEscape() &&
-      (
-        interpreter.getContext().getParent() == null ||
-        !interpreter.getContext().getParent().isAutoEscape()
-      )
+      (interpreter.getContext().getParent() == null ||
+        !interpreter.getContext().getParent().isAutoEscape())
     ) {
       output = wrapInTag(output, AutoEscapeTag.TAG_NAME, interpreter, false);
     }
@@ -746,22 +752,6 @@ public class EagerReconstructionUtils {
         interpreter.getConfig().getTokenScannerSymbols().getExpressionEndWithTag()
       )
     );
-  }
-
-  public static Set<String> removeMetaContextVariables(
-    Stream<String> varStream,
-    Context context
-  ) {
-    Set<String> metaSetVars = Sets
-      .intersection(
-        context.getMetaContextVariables(),
-        varStream
-          .filter(var -> !EagerExecutionMode.STATIC_META_CONTEXT_VARIABLES.contains(var))
-          .collect(Collectors.toSet())
-      )
-      .immutableCopy();
-    context.getMetaContextVariables().removeAll(metaSetVars);
-    return metaSetVars;
   }
 
   public static Boolean isDeferredExecutionMode() {
@@ -920,5 +910,71 @@ public class EagerReconstructionUtils {
       // The original key will be a DeferredValueImpl already on its original scope
       .filter(entry -> !(entry.getValue() instanceof DeferredValueShadow))
       .forEach(entry -> interpreter.getContext().put(entry.getKey(), entry.getValue()));
+  }
+
+  public static void reconstructPathAroundBlock(
+    DynamicRenderedOutputNode prefix,
+    OutputList blockValueBuilder,
+    JinjavaInterpreter interpreter
+  ) {
+    String blockPath = RelativePathResolver.getCurrentPathFromStackOrKey(interpreter);
+    String tempVarName = MetaContextVariables.getTemporaryCurrentPathVarName(blockPath);
+    prefix.setValue(
+      buildSetTag(
+        ImmutableMap.of(
+          tempVarName,
+          RelativePathResolver.CURRENT_PATH_CONTEXT_KEY,
+          RelativePathResolver.CURRENT_PATH_CONTEXT_KEY,
+          PyishObjectMapper.getAsPyishString(blockPath)
+        ),
+        interpreter,
+        false
+      )
+    );
+    blockValueBuilder.addNode(
+      new RenderedOutputNode(
+        buildSetTag(
+          ImmutableMap.of(
+            RelativePathResolver.CURRENT_PATH_CONTEXT_KEY,
+            tempVarName,
+            tempVarName,
+            "null"
+          ),
+          interpreter,
+          false
+        )
+      )
+    );
+  }
+
+  public static String wrapPathAroundText(
+    String text,
+    String newPath,
+    JinjavaInterpreter interpreter
+  ) {
+    String tempVarName = MetaContextVariables.getTemporaryCurrentPathVarName(newPath);
+    return (
+      buildSetTag(
+        ImmutableMap.of(
+          tempVarName,
+          RelativePathResolver.CURRENT_PATH_CONTEXT_KEY,
+          RelativePathResolver.CURRENT_PATH_CONTEXT_KEY,
+          PyishObjectMapper.getAsPyishString(newPath)
+        ),
+        interpreter,
+        false
+      ) +
+      text +
+      buildSetTag(
+        ImmutableMap.of(
+          RelativePathResolver.CURRENT_PATH_CONTEXT_KEY,
+          tempVarName,
+          tempVarName,
+          "null"
+        ),
+        interpreter,
+        false
+      )
+    );
   }
 }

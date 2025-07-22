@@ -2,19 +2,23 @@ package com.hubspot.jinjava.util;
 
 import com.google.common.annotations.Beta;
 import com.hubspot.jinjava.interpret.CannotReconstructValueException;
+import com.hubspot.jinjava.interpret.Context;
 import com.hubspot.jinjava.interpret.DeferredValue;
 import com.hubspot.jinjava.interpret.DeferredValueException;
 import com.hubspot.jinjava.interpret.JinjavaInterpreter;
 import com.hubspot.jinjava.interpret.JinjavaInterpreter.InterpreterScopeClosable;
 import com.hubspot.jinjava.interpret.LazyExpression;
+import com.hubspot.jinjava.interpret.MetaContextVariables;
 import com.hubspot.jinjava.interpret.OneTimeReconstructible;
 import com.hubspot.jinjava.interpret.RevertibleObject;
+import com.hubspot.jinjava.lib.tag.ForTag;
 import com.hubspot.jinjava.lib.tag.eager.EagerExecutionResult;
 import com.hubspot.jinjava.objects.collections.PyList;
 import com.hubspot.jinjava.objects.collections.PyMap;
 import com.hubspot.jinjava.objects.serialization.PyishObjectMapper;
 import com.hubspot.jinjava.util.EagerExpressionResolver.EagerExpressionResult;
 import java.util.AbstractMap;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -48,16 +52,13 @@ public class EagerContextWatcher {
     JinjavaInterpreter interpreter,
     EagerChildContextConfig eagerChildContextConfig
   ) {
-    final Set<String> metaContextVariables = interpreter
-      .getContext()
-      .getMetaContextVariables();
     final EagerExecutionResult initialResult;
     final Map<String, Object> speculativeBindings;
     if (eagerChildContextConfig.checkForContextChanges) {
       final Set<Entry<String, Object>> entrySet = interpreter.getContext().entrySet();
       final Map<String, Object> initiallyResolvedHashes = getInitiallyResolvedHashes(
         entrySet,
-        metaContextVariables
+        interpreter.getContext()
       );
       final Map<String, String> initiallyResolvedAsStrings =
         getInitiallyResolvedAsStrings(interpreter, entrySet, initiallyResolvedHashes);
@@ -66,15 +67,13 @@ public class EagerContextWatcher {
         getAllSpeculativeBindings(
           interpreter,
           eagerChildContextConfig,
-          metaContextVariables,
           initiallyResolvedHashes,
           initiallyResolvedAsStrings,
           initialResult
         );
     } else {
-      Set<String> ignoredKeys = getKeysToIgnore(
+      Set<String> ignoredKeys = getAdditionalKeysToIgnore(
         interpreter,
-        metaContextVariables,
         eagerChildContextConfig
       );
       initialResult = applyFunction(function, interpreter, eagerChildContextConfig);
@@ -120,11 +119,9 @@ public class EagerContextWatcher {
     // This creates a stringified snapshot of the context
     // so it can be disabled via the config because it may cause performance issues.
     Stream<Entry<String, Object>> entryStream =
-      (
-        interpreter.getConfig().getExecutionMode().useEagerContextReverting()
+      (interpreter.getConfig().getExecutionMode().useEagerContextReverting()
           ? entrySet
-          : interpreter.getContext().getCombinedScope().entrySet()
-      ).stream()
+          : interpreter.getContext().getCombinedScope().entrySet()).stream()
         .filter(entry -> initiallyResolvedHashes.containsKey(entry.getKey()))
         .filter(entry ->
           EagerExpressionResolver.isResolvableObject(entry.getValue(), 4, 400) // TODO make this configurable
@@ -142,12 +139,14 @@ public class EagerContextWatcher {
 
   private static Map<String, Object> getInitiallyResolvedHashes(
     Set<Entry<String, Object>> entrySet,
-    Set<String> metaContextVariables
+    Context context
   ) {
     Map<String, Object> mapOfHashes = new HashMap<>();
     entrySet
       .stream()
-      .filter(entry -> !metaContextVariables.contains(entry.getKey()))
+      .filter(entry ->
+        !MetaContextVariables.isMetaContextVariable(entry.getKey(), context)
+      )
       .filter(entry ->
         !(entry.getValue() instanceof DeferredValue) && entry.getValue() != null
       )
@@ -157,9 +156,8 @@ public class EagerContextWatcher {
     return mapOfHashes;
   }
 
-  private static Set<String> getKeysToIgnore(
+  private static Set<String> getAdditionalKeysToIgnore(
     JinjavaInterpreter interpreter,
-    Set<String> metaContextVariables,
     EagerChildContextConfig eagerChildContextConfig
   ) {
     // We don't need to reconstruct already deferred keys.
@@ -168,18 +166,14 @@ public class EagerContextWatcher {
         interpreter.getContext().isDeferredExecutionMode() &&
         !eagerChildContextConfig.takeNewValue
       )
-      ? Stream
-        .concat(
-          metaContextVariables.stream(),
-          interpreter
-            .getContext()
-            .entrySet()
-            .stream()
-            .filter(entry -> entry.getValue() instanceof DeferredValue)
-            .map(Entry::getKey)
-        )
+      ? interpreter
+        .getContext()
+        .entrySet()
+        .stream()
+        .filter(entry -> entry.getValue() instanceof DeferredValue)
+        .map(Entry::getKey)
         .collect(Collectors.toSet())
-      : metaContextVariables;
+      : Collections.emptySet();
   }
 
   private static Map<String, Object> getBasicSpeculativeBindings(
@@ -211,8 +205,14 @@ public class EagerContextWatcher {
       .getSpeculativeBindings()
       .entrySet()
       .stream()
+      .filter(entry ->
+        !MetaContextVariables.isMetaContextVariable(
+          entry.getKey(),
+          interpreter.getContext()
+        )
+      )
       .filter(entry -> !ignoredKeys.contains(entry.getKey()))
-      .filter(entry -> !"loop".equals(entry.getKey()))
+      .filter(entry -> !ForTag.LOOP.equals(entry.getKey()))
       .map(entry -> {
         if (
           eagerExecutionResult.getResult().isFullyResolved() ||
@@ -247,7 +247,6 @@ public class EagerContextWatcher {
   private static Map<String, Object> getAllSpeculativeBindings(
     JinjavaInterpreter interpreter,
     EagerChildContextConfig eagerChildContextConfig,
-    Set<String> metaContextVariables,
     Map<String, Object> initiallyResolvedHashes,
     Map<String, String> initiallyResolvedAsStrings,
     EagerExecutionResult eagerExecutionResult
@@ -297,7 +296,12 @@ public class EagerContextWatcher {
       speculativeBindings
         .entrySet()
         .stream()
-        .filter(entry -> !metaContextVariables.contains(entry.getKey()))
+        .filter(entry ->
+          !MetaContextVariables.isMetaContextVariable(
+            entry.getKey(),
+            interpreter.getContext()
+          )
+        )
         .filter(entry -> entry.getValue() != null)
         .filter(entry -> !isDeferredWithOriginalValueNull(entry.getValue()))
         .collect(Collectors.toMap(Entry::getKey, Entry::getValue));

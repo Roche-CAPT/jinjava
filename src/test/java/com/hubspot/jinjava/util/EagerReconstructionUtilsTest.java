@@ -2,8 +2,7 @@ package com.hubspot.jinjava.util;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -19,7 +18,6 @@ import com.hubspot.jinjava.lib.fn.MacroFunction;
 import com.hubspot.jinjava.lib.fn.eager.EagerMacroFunction;
 import com.hubspot.jinjava.lib.tag.eager.DeferredToken;
 import com.hubspot.jinjava.lib.tag.eager.EagerExecutionResult;
-import com.hubspot.jinjava.loader.RelativePathResolver;
 import com.hubspot.jinjava.mode.DefaultExecutionMode;
 import com.hubspot.jinjava.mode.EagerExecutionMode;
 import com.hubspot.jinjava.mode.PreserveRawExecutionMode;
@@ -34,7 +32,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Stream;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -71,12 +68,10 @@ public class EagerReconstructionUtilsTest extends BaseInterpretingTest {
   public void itExecutesInChildContextAndTakesNewValue() {
     context.put("foo", new PyList(new ArrayList<>()));
     EagerExecutionResult result = EagerContextWatcher.executeInChildContext(
-      (
-        interpreter1 -> {
+      (interpreter1 -> {
           ((List<Integer>) interpreter1.getContext().get("foo")).add(1);
           return EagerExpressionResult.fromString("function return");
-        }
-      ),
+        }),
       interpreter,
       EagerContextWatcher.EagerChildContextConfig
         .newBuilder()
@@ -99,15 +94,13 @@ public class EagerReconstructionUtilsTest extends BaseInterpretingTest {
   public void itExecutesInChildContextAndDefersNewValue() {
     context.put("foo", new ArrayList<Integer>());
     EagerExecutionResult result = EagerContextWatcher.executeInChildContext(
-      (
-        interpreter1 -> {
+      (interpreter1 -> {
           context.put(
             "foo",
             DeferredValue.instance(interpreter1.getContext().get("foo"))
           );
           return EagerExpressionResult.fromString("function return");
-        }
-      ),
+        }),
       interpreter,
       EagerContextWatcher.EagerChildContextConfig
         .newBuilder()
@@ -347,31 +340,6 @@ public class EagerReconstructionUtilsTest extends BaseInterpretingTest {
       )
     )
       .isEmpty();
-  }
-
-  @Test
-  public void itDoesNotRemoveStaticMetaContextVariables() {
-    String variableName = "foo";
-    interpreter.getContext().getMetaContextVariables().add(variableName);
-    assertThat(interpreter.getContext().getMetaContextVariables()).contains(variableName);
-    EagerReconstructionUtils.removeMetaContextVariables(
-      Stream.of(variableName),
-      interpreter.getContext()
-    );
-    assertThat(interpreter.getContext().getMetaContextVariables())
-      .doesNotContain(variableName);
-  }
-
-  @Test
-  public void itRemovesOtherMetaContextVariables() {
-    assertThat(interpreter.getContext().getMetaContextVariables())
-      .contains(RelativePathResolver.CURRENT_PATH_CONTEXT_KEY);
-    EagerReconstructionUtils.removeMetaContextVariables(
-      Stream.of(RelativePathResolver.CURRENT_PATH_CONTEXT_KEY),
-      interpreter.getContext()
-    );
-    assertThat(interpreter.getContext().getMetaContextVariables())
-      .contains(RelativePathResolver.CURRENT_PATH_CONTEXT_KEY);
   }
 
   @Test

@@ -5,7 +5,10 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.primitives.Primitives;
 import com.hubspot.jinjava.el.ext.DeferredParsingException;
 import com.hubspot.jinjava.el.ext.ExtendedParser;
+import com.hubspot.jinjava.interpret.Context.TemporaryValueClosable;
+import com.hubspot.jinjava.interpret.ContextConfigurationIF.ErrorHandlingStrategyIF.TemplateErrorTypeHandlingStrategy;
 import com.hubspot.jinjava.interpret.DeferredValueException;
+import com.hubspot.jinjava.interpret.ErrorHandlingStrategy;
 import com.hubspot.jinjava.interpret.JinjavaInterpreter;
 import com.hubspot.jinjava.interpret.OutputTooBigException;
 import com.hubspot.jinjava.interpret.PartiallyDeferredValue;
@@ -26,6 +29,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
@@ -121,12 +125,18 @@ public class EagerExpressionResolver {
     boolean nestedInterpretationEnabled = interpreter
       .getConfig()
       .isNestedInterpretationEnabled();
-    boolean throwInterpreterErrorsStart = interpreter
-      .getContext()
-      .getThrowInterpreterErrors();
     FoundQuotedExpressionTags foundQuotedExpressionTags = new FoundQuotedExpressionTags();
-    try {
-      interpreter.getContext().setThrowInterpreterErrors(true);
+    try (
+      TemporaryValueClosable<ErrorHandlingStrategy> closable = interpreter
+        .getContext()
+        .withErrorHandlingStrategy(
+          ErrorHandlingStrategy
+            .builder()
+            .setFatalErrorStrategy(TemplateErrorTypeHandlingStrategy.THROW_EXCEPTION)
+            .setNonFatalErrorStrategy(TemplateErrorTypeHandlingStrategy.IGNORE)
+            .build()
+        )
+    ) {
       Set<String> words = new HashSet<>();
       char[] value = partiallyResolved.toCharArray();
       int prevQuotePos = -1;
@@ -183,8 +193,6 @@ public class EagerExpressionResolver {
         );
       }
       return words;
-    } finally {
-      interpreter.getContext().setThrowInterpreterErrors(throwInterpreterErrorsStart);
     }
   }
 
@@ -335,6 +343,11 @@ public class EagerExpressionResolver {
         }
         return (Arrays.stream((Object[]) val)).filter(Objects::nonNull)
           .allMatch(item -> isResolvableObjectRec(item, depth + 1, maxDepth, maxSize));
+      } else if (val instanceof Optional) {
+        return ((Optional<?>) val).map(item ->
+            isResolvableObjectRec(item, depth + 1, maxDepth, maxSize)
+          )
+          .orElse(true);
       }
     } catch (DeferredValueException e) {
       if (!(val instanceof PartiallyDeferredValue)) {

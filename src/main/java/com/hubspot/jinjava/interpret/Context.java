@@ -20,8 +20,10 @@ import com.google.common.annotations.Beta;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.SetMultimap;
+import com.google.common.collect.Sets;
+import com.hubspot.jinjava.interpret.AutoCloseableSupplier.AutoCloseableImpl;
+import com.hubspot.jinjava.interpret.ContextConfigurationIF.ErrorHandlingStrategyIF.TemplateErrorTypeHandlingStrategy;
 import com.hubspot.jinjava.lib.Importable;
-import com.hubspot.jinjava.lib.expression.DefaultExpressionStrategy;
 import com.hubspot.jinjava.lib.expression.ExpressionStrategy;
 import com.hubspot.jinjava.lib.exptest.ExpTest;
 import com.hubspot.jinjava.lib.exptest.ExpTestLibrary;
@@ -34,6 +36,7 @@ import com.hubspot.jinjava.lib.tag.ForTag;
 import com.hubspot.jinjava.lib.tag.Tag;
 import com.hubspot.jinjava.lib.tag.TagLibrary;
 import com.hubspot.jinjava.lib.tag.eager.DeferredToken;
+import com.hubspot.jinjava.mode.EagerExecutionMode;
 import com.hubspot.jinjava.tree.Node;
 import com.hubspot.jinjava.util.DeferredValueUtils;
 import com.hubspot.jinjava.util.ScopeMap;
@@ -63,11 +66,11 @@ public class Context extends ScopeMap<String, Object> {
   private Map<Library, Set<String>> disabled;
 
   public boolean isValidationMode() {
-    return validationMode;
+    return contextConfiguration.isValidationMode();
   }
 
   public Context setValidationMode(boolean validationMode) {
-    this.validationMode = validationMode;
+    contextConfiguration = contextConfiguration.withValidationMode(validationMode);
     return this;
   }
 
@@ -99,8 +102,6 @@ public class Context extends ScopeMap<String, Object> {
   private final FunctionLibrary functionLibrary;
   private final TagLibrary tagLibrary;
 
-  private ExpressionStrategy expressionStrategy = new DefaultExpressionStrategy();
-
   private final Context parent;
 
   private int renderDepth = -1;
@@ -108,15 +109,9 @@ public class Context extends ScopeMap<String, Object> {
   private List<? extends Node> superBlock;
 
   private final Stack<String> renderStack = new Stack<>();
-
-  private boolean validationMode = false;
-  private boolean deferredExecutionMode = false;
-  private boolean deferLargeObjects = false;
-  private boolean throwInterpreterErrors = false;
-  private boolean partialMacroEvaluation = false;
-  private boolean unwrapRawOverride = false;
-  private DynamicVariableResolver dynamicVariableResolver = null;
+  private ContextConfiguration contextConfiguration = ContextConfiguration.of();
   private final Set<String> metaContextVariables; // These variable names aren't tracked in eager execution
+  private final Set<String> overriddenNonMetaContextVariables;
   private Node currentNode;
 
   public Context() {
@@ -209,14 +204,10 @@ public class Context extends ScopeMap<String, Object> {
       new FunctionLibrary(parent == null, disabled.get(Library.FUNCTION));
     this.metaContextVariables =
       parent == null ? new HashSet<>() : parent.metaContextVariables;
+    this.overriddenNonMetaContextVariables =
+      parent == null ? new HashSet<>() : parent.overriddenNonMetaContextVariables;
     if (parent != null) {
-      this.expressionStrategy = parent.expressionStrategy;
-      this.partialMacroEvaluation = parent.partialMacroEvaluation;
-      this.unwrapRawOverride = parent.unwrapRawOverride;
-      this.dynamicVariableResolver = parent.dynamicVariableResolver;
-      this.deferredExecutionMode = parent.deferredExecutionMode;
-      this.deferLargeObjects = parent.deferLargeObjects;
-      this.throwInterpreterErrors = parent.throwInterpreterErrors;
+      this.contextConfiguration = parent.contextConfiguration;
     }
   }
 
@@ -348,8 +339,42 @@ public class Context extends ScopeMap<String, Object> {
     }
   }
 
+  /**
+   * @deprecated Use {@link MetaContextVariables#isMetaContextVariable(String, Context)}
+   */
+  @Deprecated
+  @Beta
   public Set<String> getMetaContextVariables() {
     return metaContextVariables;
+  }
+
+  @Beta
+  Set<String> getComputedMetaContextVariables() {
+    return Sets.difference(metaContextVariables, overriddenNonMetaContextVariables);
+  }
+
+  @Beta
+  public void addMetaContextVariables(Collection<String> variables) {
+    metaContextVariables.addAll(variables);
+  }
+
+  Set<String> getNonMetaContextVariables() {
+    return overriddenNonMetaContextVariables;
+  }
+
+  @Beta
+  public void addNonMetaContextVariables(Collection<String> variables) {
+    overriddenNonMetaContextVariables.addAll(
+      variables
+        .stream()
+        .filter(var -> !EagerExecutionMode.STATIC_META_CONTEXT_VARIABLES.contains(var))
+        .collect(Collectors.toList())
+    );
+  }
+
+  @Beta
+  public void removeNonMetaContextVariables(Collection<String> variables) {
+    overriddenNonMetaContextVariables.removeAll(variables);
   }
 
   public void handleDeferredNode(Node node) {
@@ -622,21 +647,23 @@ public class Context extends ScopeMap<String, Object> {
   }
 
   public DynamicVariableResolver getDynamicVariableResolver() {
-    return dynamicVariableResolver;
+    return contextConfiguration.getDynamicVariableResolver();
   }
 
   public void setDynamicVariableResolver(
     final DynamicVariableResolver dynamicVariableResolver
   ) {
-    this.dynamicVariableResolver = dynamicVariableResolver;
+    contextConfiguration =
+      contextConfiguration.withDynamicVariableResolver(dynamicVariableResolver);
   }
 
   public ExpressionStrategy getExpressionStrategy() {
-    return expressionStrategy;
+    return contextConfiguration.getExpressionStrategy();
   }
 
   public void setExpressionStrategy(ExpressionStrategy expressionStrategy) {
-    this.expressionStrategy = expressionStrategy;
+    contextConfiguration =
+      contextConfiguration.withExpressionStrategy(expressionStrategy);
   }
 
   public Optional<String> getImportResourceAlias() {
@@ -649,6 +676,10 @@ public class Context extends ScopeMap<String, Object> {
 
   public CallStack getImportPathStack() {
     return importPathStack;
+  }
+
+  public CallStack getFromPathStack() {
+    return fromStack;
   }
 
   public CallStack getIncludePathStack() {
@@ -667,10 +698,12 @@ public class Context extends ScopeMap<String, Object> {
     return currentPathStack;
   }
 
+  @Deprecated
   public void pushFromStack(String path, int lineNumber, int startPosition) {
     fromStack.push(path, lineNumber, startPosition);
   }
 
+  @Deprecated
   public void popFromStack() {
     fromStack.pop();
   }
@@ -691,10 +724,17 @@ public class Context extends ScopeMap<String, Object> {
     this.renderDepth = renderDepth;
   }
 
+  public AutoCloseableSupplier<String> closeablePushRenderStack(String template) {
+    renderStack.push(template);
+    return AutoCloseableSupplier.of(() -> template, t -> renderStack.pop());
+  }
+
+  @Deprecated
   public void pushRenderStack(String template) {
     renderStack.push(template);
   }
 
+  @Deprecated
   public String popRenderStack() {
     return renderStack.pop();
   }
@@ -722,20 +762,21 @@ public class Context extends ScopeMap<String, Object> {
   }
 
   public boolean isDeferredExecutionMode() {
-    return deferredExecutionMode;
+    return contextConfiguration.isDeferredExecutionMode();
   }
 
   public Context setDeferredExecutionMode(boolean deferredExecutionMode) {
-    this.deferredExecutionMode = deferredExecutionMode;
+    contextConfiguration =
+      contextConfiguration.withDeferredExecutionMode(deferredExecutionMode);
     return this;
   }
 
   public boolean isDeferLargeObjects() {
-    return deferLargeObjects;
+    return contextConfiguration.isDeferLargeObjects();
   }
 
   public Context setDeferLargeObjects(boolean deferLargeObjects) {
-    this.deferLargeObjects = deferLargeObjects;
+    contextConfiguration = contextConfiguration.withDeferLargeObjects(deferLargeObjects);
     return this;
   }
 
@@ -743,27 +784,80 @@ public class Context extends ScopeMap<String, Object> {
     boolean deferLargeObjects
   ) {
     TemporaryValueClosable<Boolean> temporaryValueClosable = new TemporaryValueClosable<>(
-      this.deferLargeObjects,
+      isDeferLargeObjects(),
       this::setDeferLargeObjects
     );
-    this.deferLargeObjects = deferLargeObjects;
+    setDeferLargeObjects(deferLargeObjects);
     return temporaryValueClosable;
   }
 
+  @Deprecated
   public boolean getThrowInterpreterErrors() {
-    return throwInterpreterErrors;
+    ErrorHandlingStrategy errorHandlingStrategy = getErrorHandlingStrategy();
+    return (
+      errorHandlingStrategy.getFatalErrorStrategy() ==
+      TemplateErrorTypeHandlingStrategy.THROW_EXCEPTION
+    );
   }
 
+  @Deprecated
   public void setThrowInterpreterErrors(boolean throwInterpreterErrors) {
-    this.throwInterpreterErrors = throwInterpreterErrors;
+    contextConfiguration =
+      contextConfiguration.withErrorHandlingStrategy(
+        ErrorHandlingStrategy
+          .builder()
+          .setFatalErrorStrategy(
+            throwInterpreterErrors
+              ? TemplateErrorTypeHandlingStrategy.THROW_EXCEPTION
+              : TemplateErrorTypeHandlingStrategy.ADD_ERROR
+          )
+          .setNonFatalErrorStrategy(
+            throwInterpreterErrors
+              ? TemplateErrorTypeHandlingStrategy.IGNORE // Deprecated, warnings are ignored when doing eager expression resolving
+              : TemplateErrorTypeHandlingStrategy.ADD_ERROR
+          )
+          .build()
+      );
+  }
+
+  @Deprecated
+  public TemporaryValueClosable<Boolean> withThrowInterpreterErrors() {
+    TemporaryValueClosable<Boolean> temporaryValueClosable = new TemporaryValueClosable<>(
+      getThrowInterpreterErrors(),
+      this::setThrowInterpreterErrors
+    );
+    setThrowInterpreterErrors(true);
+    return temporaryValueClosable;
+  }
+
+  public ErrorHandlingStrategy getErrorHandlingStrategy() {
+    return contextConfiguration.getErrorHandlingStrategy();
+  }
+
+  public void setErrorHandlingStrategy(ErrorHandlingStrategy errorHandlingStrategy) {
+    contextConfiguration =
+      contextConfiguration.withErrorHandlingStrategy(errorHandlingStrategy);
+  }
+
+  public TemporaryValueClosable<ErrorHandlingStrategy> withErrorHandlingStrategy(
+    ErrorHandlingStrategy errorHandlingStrategy
+  ) {
+    TemporaryValueClosable<ErrorHandlingStrategy> temporaryValueClosable =
+      new TemporaryValueClosable<>(
+        getErrorHandlingStrategy(),
+        this::setErrorHandlingStrategy
+      );
+    setErrorHandlingStrategy(errorHandlingStrategy);
+    return temporaryValueClosable;
   }
 
   public boolean isPartialMacroEvaluation() {
-    return partialMacroEvaluation;
+    return contextConfiguration.isPartialMacroEvaluation();
   }
 
   public void setPartialMacroEvaluation(boolean partialMacroEvaluation) {
-    this.partialMacroEvaluation = partialMacroEvaluation;
+    contextConfiguration =
+      contextConfiguration.withPartialMacroEvaluation(partialMacroEvaluation);
   }
 
   public TemporaryValueClosable<Boolean> withPartialMacroEvaluation() {
@@ -774,43 +868,50 @@ public class Context extends ScopeMap<String, Object> {
     boolean partialMacroEvaluation
   ) {
     TemporaryValueClosable<Boolean> temporaryValueClosable = new TemporaryValueClosable<>(
-      this.partialMacroEvaluation,
+      isPartialMacroEvaluation(),
       this::setPartialMacroEvaluation
     );
-    this.partialMacroEvaluation = partialMacroEvaluation;
+    setPartialMacroEvaluation(partialMacroEvaluation);
     return temporaryValueClosable;
   }
 
   public boolean isUnwrapRawOverride() {
-    return unwrapRawOverride;
+    return contextConfiguration.isUnwrapRawOverride();
   }
 
   public void setUnwrapRawOverride(boolean unwrapRawOverride) {
-    this.unwrapRawOverride = unwrapRawOverride;
+    contextConfiguration = contextConfiguration.withUnwrapRawOverride(unwrapRawOverride);
   }
 
   public TemporaryValueClosable<Boolean> withUnwrapRawOverride() {
     TemporaryValueClosable<Boolean> temporaryValueClosable = new TemporaryValueClosable<>(
-      this.unwrapRawOverride,
+      isUnwrapRawOverride(),
       this::setUnwrapRawOverride
     );
-    this.unwrapRawOverride = true;
+    setUnwrapRawOverride(true);
     return temporaryValueClosable;
   }
 
-  public static class TemporaryValueClosable<T> implements AutoCloseable {
-
-    private final T previousValue;
-    private final Consumer<T> resetValueConsumer;
+  public static class TemporaryValueClosable<T> extends AutoCloseableImpl<T> {
 
     private TemporaryValueClosable(T previousValue, Consumer<T> resetValueConsumer) {
-      this.previousValue = previousValue;
-      this.resetValueConsumer = resetValueConsumer;
+      super(previousValue, resetValueConsumer);
     }
 
-    @Override
-    public void close() {
-      resetValueConsumer.accept(previousValue);
+    public static <T> TemporaryValueClosable<T> noOp() {
+      return new NoOpTemporaryValueClosable<>();
+    }
+
+    private static class NoOpTemporaryValueClosable<T> extends TemporaryValueClosable<T> {
+
+      private NoOpTemporaryValueClosable() {
+        super(null, null);
+      }
+
+      @Override
+      public void close() {
+        // No-op
+      }
     }
   }
 

@@ -49,8 +49,8 @@ public class EagerBlockSetTagStrategy extends EagerSetTagStrategy {
         .build()
     );
     if (
-      !eagerExecutionResult.getResult().isFullyResolved() &&
-      !eagerExecutionResult.getSpeculativeBindings().isEmpty() ||
+      (!eagerExecutionResult.getResult().isFullyResolved() &&
+        !eagerExecutionResult.getSpeculativeBindings().isEmpty()) ||
       interpreter.getContext().isDeferredExecutionMode()
     ) {
       EagerReconstructionUtils.resetAndDeferSpeculativeBindings(
@@ -170,7 +170,7 @@ public class EagerBlockSetTagStrategy extends EagerSetTagStrategy {
             .build()
         )
       );
-    String suffixToPreserveState = getSuffixToPreserveState(variables[0], interpreter);
+    String suffixToPreserveState = getSuffixToPreserveState(variables, interpreter);
     return Triple.of(
       prefixToPreserveState.toString(),
       joiner.toString(),

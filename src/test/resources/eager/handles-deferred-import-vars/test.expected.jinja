@@ -1,0 +1,34 @@
+{% set myname = deferred + 3 %}\
+{% do %}
+{% set bar = myname + 19 %}
+{% for __ignored__ in [0] %}\
+Hello {{ myname }}\
+{% endfor %}
+{% enddo %}\
+foo: {% for __ignored__ in [0] %}\
+Hello {{ myname }}\
+{% endfor %}
+bar: {{ bar }}
+---
+{% set myname = deferred + 7 %}\
+{% do %}\
+{% set __temp_meta_current_path_822093108__,current_path = current_path,'eager/supplements/macro-and-set.jinja' %}\
+{% set __temp_meta_import_alias_902286926__ = {}  %}\
+{% for __ignored__ in [0] %}
+{% set bar = myname + 19 %}\
+{% do __temp_meta_import_alias_902286926__.update({'bar': bar}) %}
+{% for __ignored__ in [0] %}\
+Hello {{ myname }}\
+{% endfor %}
+{% do __temp_meta_import_alias_902286926__.update({'import_resource_path': 'eager/supplements/macro-and-set.jinja'}) %}\
+{% endfor %}\
+{% set simple = __temp_meta_import_alias_902286926__ %}\
+{% set current_path,__temp_meta_current_path_822093108__ = __temp_meta_current_path_822093108__,null %}\
+{% enddo %}\
+simple.foo: {% set deferred_import_resource_path = 'eager/supplements/macro-and-set.jinja' %}\
+{% macro simple.foo() %}\
+Hello {{ myname }}\
+{% endmacro %}\
+{% set deferred_import_resource_path = null %}\
+{{ simple.foo() }}
+simple.bar: {{ simple.bar }}

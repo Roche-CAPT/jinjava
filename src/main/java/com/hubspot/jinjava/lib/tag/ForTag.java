@@ -37,7 +37,6 @@ import com.hubspot.jinjava.tree.ExpressionNode;
 import com.hubspot.jinjava.tree.Node;
 import com.hubspot.jinjava.tree.TagNode;
 import com.hubspot.jinjava.tree.parse.TagToken;
-import com.hubspot.jinjava.util.EagerReconstructionUtils;
 import com.hubspot.jinjava.util.ForLoop;
 import com.hubspot.jinjava.util.HelperStringTokenizer;
 import com.hubspot.jinjava.util.LengthLimitingStringBuilder;
@@ -48,7 +47,6 @@ import java.util.ConcurrentModificationException;
 import java.util.List;
 import java.util.Map.Entry;
 import java.util.Optional;
-import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.commons.lang3.tuple.Pair;
@@ -165,11 +163,6 @@ public class ForTag implements Tag {
   ) {
     ForLoop loop = ObjectIterator.getLoop(collection);
 
-    Set<String> removedMetaContextVariables =
-      EagerReconstructionUtils.removeMetaContextVariables(
-        loopVars.stream(),
-        interpreter.getContext()
-      );
     try (InterpreterScopeClosable c = interpreter.enterScope()) {
       if (interpreter.isValidationMode() && !loop.hasNext()) {
         loop = ObjectIterator.getLoop(new DummyObject());
@@ -283,25 +276,21 @@ public class ForTag implements Tag {
               interpreter.addError(TemplateError.fromOutputTooBigException(e));
               return checkLoopVariable(interpreter, buff);
             }
+            // continue in the body of the loop; ignore the rest of the body
+            if (loop.isContinued()) {
+              break;
+            }
           }
         }
         if (
           interpreter.getConfig().getMaxNumDeferredTokens() <
-          (
-            loop.getLength() *
-            interpreter.getContext().getDeferredTokens().size() /
-            loop.getIndex()
-          )
+          ((loop.getLength() * interpreter.getContext().getDeferredTokens().size()) /
+            loop.getIndex())
         ) {
           throw new DeferredValueException(TOO_LARGE_EXCEPTION_MESSAGE);
         }
       }
       return checkLoopVariable(interpreter, buff);
-    } finally {
-      interpreter
-        .getContext()
-        .getMetaContextVariables()
-        .addAll(removedMetaContextVariables);
     }
   }
 
@@ -309,7 +298,7 @@ public class ForTag implements Tag {
     JinjavaInterpreter interpreter,
     LengthLimitingStringBuilder buff
   ) {
-    if (interpreter.getContext().get("loop") instanceof DeferredValue) {
+    if (interpreter.getContext().get(LOOP) instanceof DeferredValue) {
       throw new DeferredValueException(
         "loop variable deferred",
         interpreter.getLineNumber(),
