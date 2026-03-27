@@ -214,6 +214,11 @@ public class TokenScanner extends AbstractIterator<Token> {
 
   private boolean isEndRaw() {
     int pos = currPost + 1;
+    if (pos < length) {
+      if (is[pos] == symbols.getTrimChar()) {
+        pos++;
+      }
+    }
     while (pos < length) {
       if (!Character.isWhitespace(is[pos++])) {
         break;

@@ -33,7 +33,7 @@ public class EagerTagFactory {
 
   public static final Map<Class<? extends Tag>, Class<? extends EagerTagDecorator<? extends Tag>>> EAGER_TAG_OVERRIDES =
     ImmutableMap
-      .<Class<? extends Tag>, Class<? extends EagerTagDecorator<?>>>builder()
+      .<Class<? extends Tag>, Class<? extends EagerTagDecorator<? extends Tag>>>builder()
       .put(SetTag.class, EagerSetTag.class)
       .put(DoTag.class, EagerDoTag.class)
       .put(PrintTag.class, EagerPrintTag.class)
